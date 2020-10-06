@@ -1,0 +1,71 @@
+// Implementaiton of SAFE in Drools Rule Language
+package drl_safe
+
+import drl_safe.App.SAFE;
+import drl_safe.App.Person;
+import drl_safe.App.Company;
+import drl_safe.App.RWEvent;
+import drl_safe.App.RWEvent_Type;
+import drl_safe.App.SAFE_Event_Type;
+import drl_safe.App.SAFE_Result;
+
+rule "Announce Safe Exists"
+    salience 100
+    when
+        SAFE : SAFE( )
+    then
+        System.out.println("There is a SAFE,\n");
+end
+
+// Things that are rules in the DMN Version:
+// * Calcualting SAFE Event Types
+// * Calculating whether or not events occured prior to termination of the SAFE
+// * Calculating the results of a termination event
+// * Calculating Company Financial Values
+// * Caclulating SAFE Financial Values
+
+// Section 1 (c)
+// (c)	Dissolution Event.  If there is a Dissolution Event before the 
+// termination of this Safe, the Investor will automatically be entitled 
+// (subject to the liquidation priority set forth in Section 1(d) below) 
+// to receive a portion of Proceeds equal to the Cash-Out Amount, due and 
+// payable to the Investor immediately prior to the consummation of the 
+// Dissolution Event.
+
+rule "Dissolution Event"
+    when
+        s : SAFE( terminated == false, company != null, c : company, cash_out_amount != null, co : cash_out_amount )
+        e : RWEvent( st : safe_type, st.name == "DISSOLUTION_EVENT" ) from c.events
+    then
+        System.out.println("There is an unterminated safe and a dissolution event associated with it.\n");
+        SAFE_Result safe_result = new SAFE_Result();
+        safe_result.setCash_amount_due(Double.valueOf(co));
+        modify( s ) {
+          setSafe_result(safe_result),
+          setTerminated(true),
+          setTerminating_event(e)
+        }
+end
+
+
+rule "Cash Out Amount"
+    when
+        s : SAFE( purchase_amount != null, pa : purchase_amount, cash_out_amount == null)
+    then
+        System.out.println("Setting cash out amount to " + pa + ".\n");
+        modify( s ) {
+            setCash_out_amount(pa)
+        }
+end
+
+
+// S 1(d) Liquidation Priority.  In a Liquidity Event or Dissolution Event, this Safe is intended to operate like standard non-participating Preferred Stock.
+rule "Standard non-Participating Preferred Stock"
+   when
+       // The safe_event_type of the terminating event is liquidity or dissolution
+       s : SAFE( terminated == true, terminating_event != null, safe_result != null, sr : safe_result)
+       te : RWEvent( st : safe_event_type, (st.name == "LIQUIDATION EVENT" || st.name == "DISSOLUTION EVENT" ) ) from s.terminating_event
+   then
+        modify the safe_operates to true for the safe_result.
+       System.out.println("testing");
+end
