@@ -1,13 +1,76 @@
 // Implementaiton of SAFE in Drools Rule Language
 package drl_safe
 
-import drl_safe.App.SAFE;
-import drl_safe.App.Person;
-import drl_safe.App.Company;
-import drl_safe.App.RWEvent;
-import drl_safe.App.RWEvent_Type;
-import drl_safe.App.SAFE_Event_Type;
-import drl_safe.App.SAFE_Result;
+import java.util.Date
+import java.util.ArrayList
+
+declare SAFE
+    investor: Person
+    company: Company
+    purchase_amount: Integer
+    post_money_valuation_cap: Integer
+    discount_rate: Double
+    safe_result: SAFE_Result
+    date_terminated: Date
+    terminated: boolean
+    safe_price: Double
+    liquidity_price: Double
+    conversion_price: Double
+    conversion_amount: Double
+    cash_out_amount: Integer
+    terminating_event: RWEvent
+ end
+
+declare Person
+    name: String
+end
+
+declare Company
+    name: String
+    preferred_share_price: Double
+    capital_stock_issued: Integer
+    converting_securities: Double
+    issued_options: Integer
+    promised_options: Integer
+    unissued_options: Integer
+    capitalization: Integer
+    liquidity_capitalization: Integer
+    events: ArrayList<RWEvent>
+end
+
+declare RWEvent
+    type: RWEvent_Type
+    date: Date
+    safe_type: SAFE_Event_Type
+    intended_to_qualify_tax_free: boolean
+    security_holders_given_choice_of_form_and_amount: boolean
+end
+
+declare SAFE_Result
+    investor_provides_documents: boolean
+    investor_choice_form_and_amount: boolean
+    board_may_reduce_cash_portion: boolean
+    safe_operates_as_preferred_stock: boolean
+    terminating_event: String
+    cash_amount_due: Double
+    safe_preferred_stock_due: Double
+end
+
+declare enum SAFE_Event_Type
+    LIQUIDITY_EVENT,
+    DISSOLUTION_EVENT,
+    EQUITY_FINANCING;
+end
+
+declare enum RWEvent_Type
+    INITIAL_PUBLIC_OFFERING,
+    DIRECT_LISTING,
+    CHANGE_OF_CONTROL,
+    VOLUNTARY_TERMINATION_OF_OPERATIONS,
+    OTHER_LIQUIDATION_ETC,
+    GENERAL_ASSIGNMENT_FOR_BENEFIT_OF_CREDITORS,
+    BONA_FIDE_TRANSACTION;
+end
 
 rule "Announce Safe Exists"
     salience 100
@@ -17,12 +80,24 @@ rule "Announce Safe Exists"
         System.out.println("There is a SAFE,\n");
 end
 
-// Things that are rules in the DMN Version:
-// * Calcualting SAFE Event Types
-// * Calculating whether or not events occured prior to termination of the SAFE
-// * Calculating the results of a termination event
-// * Calculating Company Financial Values
-// * Caclulating SAFE Financial Values
+// Rule to Create Data For Testing
+rule "Test Scenario"
+    when
+        // Left empty so rule will always trigger.
+    then
+        Company company = new Company();
+        company.setName("ABC Inc.");
+        ArrayList<RWEvent> events = new ArrayList<RWEvent>();
+        company.setEvents(events);
+        SAFE test_safe = new SAFE();
+        test_safe.setCompany(company);
+        test_safe.setPurchase_amount(1000000);
+        RWEvent event = new RWEvent();
+        event.setSafe_type(SAFE_Event_Type.DISSOLUTION_EVENT);
+        company.getEvents().add(event);
+        
+        insert(test_safe);
+end
 
 // Section 1 (c)
 // (c)	Dissolution Event.  If there is a Dissolution Event before the 
@@ -35,7 +110,7 @@ end
 rule "Dissolution Event"
     when
         s : SAFE( terminated == false, company != null, c : company, cash_out_amount != null, co : cash_out_amount )
-        e : RWEvent( st : safe_type, st.name == "DISSOLUTION_EVENT" ) from c.events
+        e : RWEvent( safe_type == SAFE_Event_Type.DISSOLUTION_EVENT ) from c.events
     then
         System.out.println("There is an unterminated safe and a dissolution event associated with it.\n");
         SAFE_Result safe_result = new SAFE_Result();
@@ -64,8 +139,9 @@ rule "Standard non-Participating Preferred Stock"
    when
        // The safe_event_type of the terminating event is liquidity or dissolution
        s : SAFE( terminated == true, terminating_event != null, safe_result != null, sr : safe_result)
-       te : RWEvent( st : safe_event_type, (st.name == "LIQUIDATION EVENT" || st.name == "DISSOLUTION EVENT" ) ) from s.terminating_event
+       te : RWEvent( safe_type == SAFE_Event_Type.LIQUIDITY_EVENT  || safe_type == SAFE_Event_Type.DISSOLUTION_EVENT ) from s.terminating_event
    then
-        modify the safe_operates to true for the safe_result.
-       System.out.println("testing");
+       // modify the safe_operates to true for the safe_result.
+       sr.setSafe_operates_as_preferred_stock(true);
+       // update( sr ) and modify( sr ) do not work with a handle not found error
 end
