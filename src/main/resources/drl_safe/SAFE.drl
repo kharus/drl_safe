@@ -53,7 +53,7 @@ declare SAFE_Result
     safe_operates_as_preferred_stock: boolean
     terminating_event: String
     cash_amount_due: Double
-    safe_preferred_stock_due: Double
+    safe_preferred_stock_due: Integer
 end
 
 declare enum SAFE_Event_Type
@@ -78,22 +78,27 @@ rule "Test Scenario"
     when
         // Left empty so rule will always trigger.
     then
-        System.out.println("Creating test data.\n");
+        // System.out.println("Creating test data.\n");
+        Person investor_a = new Person();
+        investor_a.setName("Investor A");
+        Person investor_b = new Person();
+        investor_b.setName("Investor B");
         Company company = new Company();
         company.setName("ABC Inc.");
         ArrayList<RWEvent> events = new ArrayList<RWEvent>();
         company.setEvents(events);
         SAFE investor_a_safe = new SAFE();
+        investor_a_safe.setInvestor(investor_a);
         investor_a_safe.setCompany(company);
         investor_a_safe.setPurchase_amount(200000);
         investor_a_safe.setPost_money_valuation_cap(4000000);
         investor_a_safe.setDiscount_rate(1.0);
         SAFE investor_b_safe = new SAFE();
+        investor_b_safe.setInvestor(investor_b);
         investor_b_safe.setCompany(company);
         investor_b_safe.setPurchase_amount(800000);
         investor_b_safe.setPost_money_valuation_cap(8000000);
         investor_b_safe.setDiscount_rate(1.0);
-        company.setConverting_securities(0.15); // This should be calculated in future, for for parity to the DMN representation doesn't need to be now.
         company.setPreferred_share_price(1.1144);
         company.setCapital_stock_issued(9250000);
         company.setIssued_options(300000);
@@ -110,6 +115,20 @@ rule "Test Scenario"
         insert(event);
 end
 
+// Note that this implementation assumes that all of the converting securities will be SAFEs in the database.
+
+rule "converting equities"
+    agenda-group "conversions"
+    when
+        s : SAFE( pmvc : post_money_valuation_cap, pa: purchase_amount )
+        c : Company( cs : converting_securities ) from s.company
+    then
+        //System.out.println("Adding " + pa + " divided by " + pmvc + " or " + Double.valueOf(pa)/pmvc + " to converting securities, which is currently " + cs + ".");
+        modify (c) {
+            setConverting_securities(cs+(Double.valueOf(pa)/pmvc))
+        }
+end
+
 // Section 1 (c)
 // (c)	Dissolution Event.  If there is a Dissolution Event before the 
 // termination of this Safe, the Investor will automatically be entitled 
@@ -124,7 +143,7 @@ rule "Dissolution Event"
         s : SAFE( terminated == false, company != null, c : company, cash_out_amount != 0, co : cash_out_amount )
         e : RWEvent( safe_type == SAFE_Event_Type.DISSOLUTION_EVENT ) from c.events
     then
-        System.out.println("Triggering Dissolution Event Rule.\n");
+        // System.out.println("Triggering Dissolution Event Rule.\n");
         SAFE_Result safe_result = new SAFE_Result();
         safe_result.setCash_amount_due(Double.valueOf(co));
         insert( safe_result ); // When adding elements to the database that you want to be able to modify, you must "insert"
@@ -143,7 +162,7 @@ rule "Standard non-Participating Preferred Stock"
         s : SAFE( terminated == true, terminating_event != null, safe_result != null, sr : safe_result)
         te : RWEvent( safe_type == SAFE_Event_Type.LIQUIDITY_EVENT  || safe_type == SAFE_Event_Type.DISSOLUTION_EVENT ) from s.terminating_event
     then
-         System.out.println("Triggering Standard non-participating stock Rule.\n");
+        //  System.out.println("Triggering Standard non-participating stock Rule.\n");
         // modify the safe_operates to true for the safe_result.
         modify( sr ){
             setSafe_operates_as_preferred_stock(true)
@@ -169,9 +188,9 @@ rule "Equity Financing"
         c : Company(  ) from s.company
         e : RWEvent( safe_type == SAFE_Event_Type.EQUITY_FINANCING ) from c.events
     then
-        System.out.println("Triggering Equity Financing Rule.\n");
+        // System.out.println("Triggering Equity Financing Rule.\n");
         SAFE_Result safe_result = new SAFE_Result();
-        safe_result.setSafe_preferred_stock_due(pa/cp);
+        safe_result.setSafe_preferred_stock_due((int)(pa/cp));
         safe_result.setInvestor_provides_documents(true);
         insert( safe_result ); // Before you can modify or update it, you must insert it.
         modify( s ) {
@@ -193,7 +212,7 @@ rule "Converstion Price"
         s : SAFE( dr : discount_rate, sp : safe_price, safe_price != 0.0) // 0.0 is being treated as "unknown", here, for testing purposes.
         c : Company( psp: preferred_share_price ) from s.company
     then
-        System.out.println("Triggering Conversion Price Rule.\n");
+        // System.out.println("Triggering Conversion Price Rule.\n");
         Double discount_price = psp * dr;
         modify ( s ) {
             setConversion_price(Double.min(discount_price,sp))
@@ -215,7 +234,7 @@ rule "Termination Event Equity"
         sr : SAFE_Result( ) from s.safe_result
         te : RWEvent( safe_type == SAFE_Event_Type.EQUITY_FINANCING ) from s.terminating_event
     then
-        System.out.println("Triggering termination event, equity.\n");
+        // System.out.println("Triggering termination event, equity.\n");
         modify( sr ) {
             setTerminating_event("Issuance of capital stock.");
         }
@@ -228,7 +247,7 @@ rule "Termination Event Liquidity and Dissolution"
         sr : SAFE_Result( ) from s.safe_result
         te : RWEvent( safe_type == SAFE_Event_Type.LIQUIDITY_EVENT || safe_type == SAFE_Event_Type.DISSOLUTION_EVENT ) from s.terminating_event
     then
-        System.out.println("Triggering termination event, dissolution or liquidity.\n");
+        // System.out.println("Triggering termination event, dissolution or liquidity.\n");
         modify ( sr ) {
             setTerminating_event("Payment or setting aside of payment.")
         }
@@ -252,7 +271,7 @@ rule "Dissolution Event Defined"
             // TODO: Figure out how to implement this requirement.
         )
     then
-        System.out.println("Triggering Dissolution Event Defined.\n");
+        // System.out.println("Triggering Dissolution Event Defined.\n");
         modify (e) {
             setSafe_type(SAFE_Event_Type.DISSOLUTION_EVENT)
         }
@@ -267,7 +286,7 @@ rule "Equity Finance Defined"
     when
         e : RWEvent( type == RWEvent_Type.BONA_FIDE_TRANSACTION )
     then
-        System.out.println("Triggering Equity Finance Defined.\n");
+        // System.out.println("Triggering Equity Finance Defined.\n");
         modify (e) {
             setSafe_type(SAFE_Event_Type.EQUITY_FINANCING)
         }
@@ -286,7 +305,7 @@ rule "Liquidity Event Defined"
             )
         )
     then
-        System.out.println("Triggering Liquidity Event Defined.\n");
+        // System.out.println("Triggering Liquidity Event Defined.\n");
         modify (e) {
             setSafe_type(SAFE_Event_Type.LIQUIDITY_EVENT)
         }
@@ -300,7 +319,7 @@ rule "Liquidity Price"
         s : SAFE( pmvc: post_money_valuation_cap )
         c : Company( lc: liquidity_capitalization, liquidity_capitalization != 0) from s.company
     then
-        System.out.println("Triggering liquidity price calculation.\n");
+        // System.out.println("Triggering liquidity price calculation.\n");
         modify (s) {
             setLiquidity_price(Double.valueOf(pmvc)/lc)
         }
@@ -314,7 +333,7 @@ rule "Safe Price"
         s : SAFE( pmvc : post_money_valuation_cap )
         c : Company( cc : capitalization, capitalization != 0 ) from s.company
     then
-        System.out.println("Triggering Safe Price Calculation.\n");
+        // System.out.println("Triggering Safe Price Calculation.\n");
         modify (s) {
             setSafe_price(Double.valueOf(pmvc)/cc)
         }
@@ -333,7 +352,7 @@ rule "Liquidity Event s1(b)"
         c : Company( ) from s.company
         e : RWEvent( safe_type == SAFE_Event_Type.LIQUIDITY_EVENT ) from c.events
     then
-        System.out.println("Triggering Liquidity Event results rule.\n");
+        // System.out.println("Triggering Liquidity Event results rule.\n");
         SAFE_Result safe_result = new SAFE_Result();
         safe_result.setCash_amount_due(Double.max(coa,ca));
         insert( safe_result ); // When adding elements to the database that you want to be able to modify, you must "insert"
@@ -349,7 +368,7 @@ rule "Cash out Amount"
     when
         s : SAFE( pa: purchase_amount )
     then
-        System.out.println("Triggering Cash Out Amount Calculation.\n");
+        // System.out.println("Triggering Cash Out Amount Calculation.\n");
         modify (s) {
             setCash_out_amount(pa)
         }
@@ -361,7 +380,7 @@ rule "Conversion Amount"
         s : SAFE( pa: purchase_amount, lp : liquidity_price, liquidity_price != 0.0)
         c : Company( psp : preferred_share_price ) from s.company
     then
-        System.out.println("Triggering calculation of conversion amount.\n");
+        // System.out.println("Triggering calculation of conversion amount.\n");
         modify (s) {
             setConversion_amount(psp*(Double.valueOf(pa)/lp))
         }
@@ -379,7 +398,7 @@ rule "Liquidity Event Form and Amount"
         s : SAFE( terminated == true, sr : safe_result )
         e : RWEvent( safe_type == SAFE_Event_Type.LIQUIDITY_EVENT, security_holders_given_choice_of_form_and_amount == true ) from s.terminating_event
     then
-        System.out.println("Triggering Liquidity Event Form and Amount Rule.\n");
+        // System.out.println("Triggering Liquidity Event Form and Amount Rule.\n");
         modify( sr ) {
           setInvestor_choice_form_and_amount(true)
         }
@@ -397,7 +416,7 @@ rule "Liquidity Event Change of Control"
         s : SAFE( terminated == true, sr : safe_result )
         e : RWEvent( safe_type == SAFE_Event_Type.LIQUIDITY_EVENT, intended_to_qualify_tax_free == true ) from s.terminating_event
     then
-        System.out.println("Triggering Liquidity Event Tax-Free Rule.\n");
+        // System.out.println("Triggering Liquidity Event Tax-Free Rule.\n");
         modify( sr ) {
           setBoard_may_reduce_cash_portion(true)
         }
@@ -414,9 +433,9 @@ rule "Liquidity Capitalization"
     when
         c : Company( csi : capital_stock_issued, io: issued_options, po: promised_options, cs: converting_securities )
     then
-        System.out.println("Triggering Liquidity Capitalization Calculation.\n");
+        // System.out.println("Triggering Liquidity Capitalization Calculation.\n");
         modify (c) {
-            setLiquidity_capitalization((int)Math.floor(csi+io+po/(1-cs)))
+            setLiquidity_capitalization((int)Math.floor((csi+io+po)/(1-cs)))
         }
 end
 
@@ -433,8 +452,41 @@ rule "Company Capitalization"
     when
         c : Company( csi : capital_stock_issued, io: issued_options, po: promised_options, cs: converting_securities, uo: unissued_options, capitalization == 0 )
     then
-        System.out.println("Triggering Company Capitalization Calculation.\n");
+        // System.out.println("Triggering Company Capitalization Calculation.\n");
         modify (c) {
-            setCapitalization((int)Math.floor(csi+io+po+uo/(1-cs)))
+            setCapitalization((int)Math.floor((csi+io+po+uo)/(1-cs)))
         }
+end
+
+rule "Results"
+    agenda-group "results"
+    when
+        s : SAFE( terminated == true )
+        c : Company ( cn : name ) from s.company
+        i : Person( pn : name ) from s.investor
+        sr : SAFE_Result(   ipd : investor_provides_documents,
+                            icfa : investor_choice_form_and_amount,
+                            bmrcp : board_may_reduce_cash_portion,
+                            sops : safe_operates_as_preferred_stock,
+                            te : terminating_event,
+                            cad : cash_amount_due,
+                            spsd : safe_preferred_stock_due
+                        ) from s.safe_result
+    then
+        System.out.println(pn + " purchased a safe from " + cn + ".");
+        if (ipd){
+            System.out.println(pn + " is obliged to provide documentation.");
+        }
+        if (icfa){
+            System.out.println(pn + " is entitled to choose the form and amount of payment.");
+        }
+        if (bmrcp){
+            System.out.println("The board of " + cn + " is entited to reduce the cash portion of the payment.");
+        }
+        if (sops){
+            System.out.println("The safe operates as preferred stock.");
+        }
+        System.out.println(pn + " is entitled to " + cad + " in cash.");
+        System.out.println(pn + " is entitled to " + spsd + " preferred stock.");
+        System.out.println("These requirements will be met on: " + te + "\n\n");
 end

@@ -1,8 +1,8 @@
 package drl_safe;
 
 import org.kie.api.KieServices;
-import org.kie.api.event.rule.DebugAgendaEventListener;
-import org.kie.api.event.rule.DebugRuleRuntimeEventListener;
+// import org.kie.api.event.rule.DebugAgendaEventListener;
+// import org.kie.api.event.rule.DebugRuleRuntimeEventListener;
 import org.kie.api.runtime.KieContainer;
 import org.kie.api.runtime.KieSession;
 import org.kie.api.runtime.rule.Agenda;
@@ -29,6 +29,8 @@ public class App
         Agenda agenda = ksession.getAgenda();
         agenda.getAgendaGroup( "start" ).setFocus();
         ksession.fireAllRules();
+        agenda.getAgendaGroup( "conversions" ).setFocus();
+        ksession.fireAllRules();
         agenda.getAgendaGroup( "capitalization" ).setFocus();
         ksession.fireAllRules();
         agenda.getAgendaGroup( "prices 1" ).setFocus();
@@ -40,6 +42,8 @@ public class App
         agenda.getAgendaGroup( "terminate" ).setFocus();
         ksession.fireAllRules();
         agenda.getAgendaGroup( "post-terminate" ).setFocus();
+        ksession.fireAllRules();
+        agenda.getAgendaGroup( "results" ).setFocus();
         ksession.fireAllRules();
       
         // and fire the rules
