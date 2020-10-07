@@ -59,7 +59,7 @@ rule "Test Scenario"
 end
 ```
 
-When the application is run, return the following output (ommitting compilation warnings).
+When the application is run, it returns the following output (ommitting compilation warnings).
 
 ```
 Investor B purchased a safe from ABC Inc..
