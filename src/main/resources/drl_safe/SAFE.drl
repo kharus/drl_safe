@@ -72,31 +72,42 @@ declare enum RWEvent_Type
     BONA_FIDE_TRANSACTION;
 end
 
-rule "Announce Safe Exists"
-    salience 100
-    when
-        SAFE : SAFE( )
-    then
-        System.out.println("There is a SAFE,\n");
-end
-
 // Rule to Create Data For Testing
 rule "Test Scenario"
+    agenda-group "start"
     when
         // Left empty so rule will always trigger.
     then
+        System.out.println("Creating test data.\n");
         Company company = new Company();
         company.setName("ABC Inc.");
         ArrayList<RWEvent> events = new ArrayList<RWEvent>();
         company.setEvents(events);
-        SAFE test_safe = new SAFE();
-        test_safe.setCompany(company);
-        test_safe.setPurchase_amount(1000000);
+        SAFE investor_a_safe = new SAFE();
+        investor_a_safe.setCompany(company);
+        investor_a_safe.setPurchase_amount(200000);
+        investor_a_safe.setPost_money_valuation_cap(4000000);
+        investor_a_safe.setDiscount_rate(1.0);
+        SAFE investor_b_safe = new SAFE();
+        investor_b_safe.setCompany(company);
+        investor_b_safe.setPurchase_amount(800000);
+        investor_b_safe.setPost_money_valuation_cap(8000000);
+        investor_b_safe.setDiscount_rate(1.0);
+        company.setConverting_securities(0.15); // This should be calculated in future, for for parity to the DMN representation doesn't need to be now.
+        company.setPreferred_share_price(1.1144);
+        company.setCapital_stock_issued(9250000);
+        company.setIssued_options(300000);
+        company.setPromised_options(350000);
+        company.setUnissued_options(100000);
+
         RWEvent event = new RWEvent();
-        event.setSafe_type(SAFE_Event_Type.DISSOLUTION_EVENT);
+        event.setType(RWEvent_Type.BONA_FIDE_TRANSACTION);
         company.getEvents().add(event);
         
-        insert(test_safe);
+        insert(company);
+        insert(investor_a_safe);
+        insert(investor_b_safe);
+        insert(event);
 end
 
 // Section 1 (c)
@@ -108,13 +119,15 @@ end
 // Dissolution Event.
 
 rule "Dissolution Event"
+    agenda-group "terminate"
     when
-        s : SAFE( terminated == false, company != null, c : company, cash_out_amount != null, co : cash_out_amount )
+        s : SAFE( terminated == false, company != null, c : company, cash_out_amount != 0, co : cash_out_amount )
         e : RWEvent( safe_type == SAFE_Event_Type.DISSOLUTION_EVENT ) from c.events
     then
-        System.out.println("There is an unterminated safe and a dissolution event associated with it.\n");
+        System.out.println("Triggering Dissolution Event Rule.\n");
         SAFE_Result safe_result = new SAFE_Result();
         safe_result.setCash_amount_due(Double.valueOf(co));
+        insert( safe_result ); // When adding elements to the database that you want to be able to modify, you must "insert"
         modify( s ) {
           setSafe_result(safe_result),
           setTerminated(true),
@@ -122,26 +135,306 @@ rule "Dissolution Event"
         }
 end
 
-
-rule "Cash Out Amount"
+// S 1(d) Liquidation Priority.  In a Liquidity Event or Dissolution Event, this Safe is intended to operate like standard non-participating Preferred Stock.
+rule "Standard non-Participating Preferred Stock"
+    agenda-group "post-terminate"
     when
-        s : SAFE( purchase_amount != null, pa : purchase_amount, cash_out_amount == null)
+        // The safe_event_type of the terminating event is liquidity or dissolution
+        s : SAFE( terminated == true, terminating_event != null, safe_result != null, sr : safe_result)
+        te : RWEvent( safe_type == SAFE_Event_Type.LIQUIDITY_EVENT  || safe_type == SAFE_Event_Type.DISSOLUTION_EVENT ) from s.terminating_event
     then
-        System.out.println("Setting cash out amount to " + pa + ".\n");
+         System.out.println("Triggering Standard non-participating stock Rule.\n");
+        // modify the safe_operates to true for the safe_result.
+        modify( sr ){
+            setSafe_operates_as_preferred_stock(true)
+        }
+end
+
+// S 1 (a) Equity Financing. 
+// If there is an Equity Financing before the termination of this Safe, on the initial closing of such Equity Financing, 
+// this Safe will automatically convert into the number of shares of Safe Preferred Stock equal to the Purchase Amount 
+// divided by the Conversion Price.
+
+// // 	In connection with the automatic conversion of this Safe into shares of Safe Preferred Stock, the Investor will 
+// execute and deliver to the Company all of the transaction documents related to the Equity Financing; provided, that 
+// such documents (i) are the same documents to be entered into with the purchasers of Standard Preferred Stock, with 
+// appropriate variations for the Safe Preferred Stock if applicable, and (ii) have customary exceptions to any drag-along 
+// applicable to the Investor, including (without limitation) limited representations, warranties, liability and 
+// indemnification obligations for the Investor.
+
+rule "Equity Financing"
+    agenda-group "terminate"
+    when
+        s : SAFE( terminated == false, pa: purchase_amount, cp : conversion_price )
+        c : Company(  ) from s.company
+        e : RWEvent( safe_type == SAFE_Event_Type.EQUITY_FINANCING ) from c.events
+    then
+        System.out.println("Triggering Equity Financing Rule.\n");
+        SAFE_Result safe_result = new SAFE_Result();
+        safe_result.setSafe_preferred_stock_due(pa/cp);
+        safe_result.setInvestor_provides_documents(true);
+        insert( safe_result ); // Before you can modify or update it, you must insert it.
         modify( s ) {
+          setSafe_result(safe_result),
+          setTerminated(true),
+          setTerminating_event(e)
+        }
+end
+
+// “Conversion Price” means the either: (1) the Safe Price or (2) the Discount Price, whichever calculation results in a greater number of shares of Safe Preferred Stock.
+
+// “Discount Price” means the price per share of the Standard Preferred Stock sold in the Equity Financing multiplied by the Discount Rate. 
+
+// Note that this definition is somewhat circular. It is simplified here to the safe price or the discount price, whichever is lower.
+
+rule "Converstion Price"
+    agenda-group "prices 2"
+    when
+        s : SAFE( dr : discount_rate, sp : safe_price, safe_price != 0.0) // 0.0 is being treated as "unknown", here, for testing purposes.
+        c : Company( psp: preferred_share_price ) from s.company
+    then
+        System.out.println("Triggering Conversion Price Rule.\n");
+        Double discount_price = psp * dr;
+        modify ( s ) {
+            setConversion_price(Double.min(discount_price,sp))
+        }
+end
+
+// (e)	Termination. This Safe will automatically terminate (without relieving the Company of any obligations arising from a 
+// prior breach of or non-compliance with this Safe) immediately following the earliest to occur of: (i) the issuance of 
+// Capital Stock to the Investor pursuant to the automatic conversion of this Safe under Section 1(a); or (ii) the payment, 
+// or setting aside for payment, of amounts due the Investor pursuant to Section 1(b) or Section 1(c).
+
+// TODO: See if there is a way to use complicated conditions and conclusions to combine these two rules into a single rule,
+// without making it procedural. See the "do" syntax in the documentation.
+
+rule "Termination Event Equity"
+    agenda-group "post-terminate"
+    when
+        s : SAFE( )
+        sr : SAFE_Result( ) from s.safe_result
+        te : RWEvent( safe_type == SAFE_Event_Type.EQUITY_FINANCING ) from s.terminating_event
+    then
+        System.out.println("Triggering termination event, equity.\n");
+        modify( sr ) {
+            setTerminating_event("Issuance of capital stock.");
+        }
+end
+
+rule "Termination Event Liquidity and Dissolution"
+    agenda-group "post-terminate"
+    when
+        s : SAFE( )
+        sr : SAFE_Result( ) from s.safe_result
+        te : RWEvent( safe_type == SAFE_Event_Type.LIQUIDITY_EVENT || safe_type == SAFE_Event_Type.DISSOLUTION_EVENT ) from s.terminating_event
+    then
+        System.out.println("Triggering termination event, dissolution or liquidity.\n");
+        modify ( sr ) {
+            setTerminating_event("Payment or setting aside of payment.")
+        }
+end
+
+// “Dissolution Event” means (i) a voluntary termination of operations, (ii) a general assignment 
+// for the benefit of the Company’s creditors or (iii) any other liquidation, dissolution or winding 
+// up of the Company (excluding a Liquidity Event), whether voluntary or involuntary.
+
+rule "Dissolution Event Defined"
+    agenda-group "pre-terminate"
+    when
+        e : RWEvent(
+            type in (
+                RWEvent_Type.VOLUNTARY_TERMINATION_OF_OPERATIONS,
+                RWEvent_Type.GENERAL_ASSIGNMENT_FOR_BENEFIT_OF_CREDITORS,
+                RWEvent_Type.OTHER_LIQUIDATION_ETC
+            )
+            //,
+            //safe_type != SAFE_Event_Type.LIQUIDITY_EVENT // This may not work to cause backward chaining.
+            // TODO: Figure out how to implement this requirement.
+        )
+    then
+        System.out.println("Triggering Dissolution Event Defined.\n");
+        modify (e) {
+            setSafe_type(SAFE_Event_Type.DISSOLUTION_EVENT)
+        }
+end
+
+// “Equity Financing” means a bona fide transaction or series of transactions with the principal 
+// purpose of raising capital, pursuant to which the Company issues and sells Preferred Stock at 
+// a fixed valuation, including but not limited to, a pre-money or post-money valuation.
+
+rule "Equity Finance Defined"
+    agenda-group "pre-terminate"
+    when
+        e : RWEvent( type == RWEvent_Type.BONA_FIDE_TRANSACTION )
+    then
+        System.out.println("Triggering Equity Finance Defined.\n");
+        modify (e) {
+            setSafe_type(SAFE_Event_Type.EQUITY_FINANCING)
+        }
+end
+
+// “Liquidity Event” means a Change of Control, a Direct Listing or an Initial Public Offering. 
+
+rule "Liquidity Event Defined"
+    agenda-group "pre-terminate"
+    when
+        e : RWEvent( type in
+            (
+            RWEvent_Type.CHANGE_OF_CONTROL,
+            RWEvent_Type.DIRECT_LISTING,
+            RWEvent_Type.INITIAL_PUBLIC_OFFERING
+            )
+        )
+    then
+        System.out.println("Triggering Liquidity Event Defined.\n");
+        modify (e) {
+            setSafe_type(SAFE_Event_Type.LIQUIDITY_EVENT)
+        }
+end
+
+// “Liquidity Price” means the price per share equal to the Post-Money Valuation Cap divided by the Liquidity Capitalization.
+
+rule "Liquidity Price"
+    agenda-group "prices 1"
+    when
+        s : SAFE( pmvc: post_money_valuation_cap )
+        c : Company( lc: liquidity_capitalization, liquidity_capitalization != 0) from s.company
+    then
+        System.out.println("Triggering liquidity price calculation.\n");
+        modify (s) {
+            setLiquidity_price(Double.valueOf(pmvc)/lc)
+        }
+end
+
+// “Safe Price” means the price per share equal to the Post-Money Valuation Cap divided by the Company Capitalization.
+
+rule "Safe Price"
+    agenda-group "prices 1"
+    when
+        s : SAFE( pmvc : post_money_valuation_cap )
+        c : Company( cc : capitalization, capitalization != 0 ) from s.company
+    then
+        System.out.println("Triggering Safe Price Calculation.\n");
+        modify (s) {
+            setSafe_price(Double.valueOf(pmvc)/cc)
+        }
+end
+
+// (b)	Liquidity Event.  If there is a Liquidity Event before the termination of this Safe, this Safe will automatically 
+// be entitled (subject to the liquidation priority set forth in Section 1(d) below) to receive a portion of Proceeds, 
+// due and payable to the Investor immediately prior to, or concurrent with, the consummation of such Liquidity Event, equal 
+// to the greater of (i) the Purchase Amount (the “Cash-Out Amount”) or (ii) the amount payable on the number of shares of 
+// Common Stock equal to the Purchase Amount divided by the Liquidity Price (the “Conversion Amount”).
+
+rule "Liquidity Event s1(b)"
+    agenda-group "terminate"
+    when
+        s : SAFE( terminated == false, coa : cash_out_amount, cash_out_amount != 0, ca : conversion_amount, conversion_amount != 0.0)
+        c : Company( ) from s.company
+        e : RWEvent( safe_type == SAFE_Event_Type.LIQUIDITY_EVENT ) from c.events
+    then
+        System.out.println("Triggering Liquidity Event results rule.\n");
+        SAFE_Result safe_result = new SAFE_Result();
+        safe_result.setCash_amount_due(Double.max(coa,ca));
+        insert( safe_result ); // When adding elements to the database that you want to be able to modify, you must "insert"
+        modify( s ) {
+          setSafe_result(safe_result),
+          setTerminated(true),
+          setTerminating_event(e)
+        }
+end
+
+rule "Cash out Amount"
+    agenda-group "prices 2"
+    when
+        s : SAFE( pa: purchase_amount )
+    then
+        System.out.println("Triggering Cash Out Amount Calculation.\n");
+        modify (s) {
             setCash_out_amount(pa)
         }
 end
 
+rule "Conversion Amount"
+    agenda-group "prices 2"
+    when
+        s : SAFE( pa: purchase_amount, lp : liquidity_price, liquidity_price != 0.0)
+        c : Company( psp : preferred_share_price ) from s.company
+    then
+        System.out.println("Triggering calculation of conversion amount.\n");
+        modify (s) {
+            setConversion_amount(psp*(Double.valueOf(pa)/lp))
+        }
+end
 
-// S 1(d) Liquidation Priority.  In a Liquidity Event or Dissolution Event, this Safe is intended to operate like standard non-participating Preferred Stock.
-rule "Standard non-Participating Preferred Stock"
-   when
-       // The safe_event_type of the terminating event is liquidity or dissolution
-       s : SAFE( terminated == true, terminating_event != null, safe_result != null, sr : safe_result)
-       te : RWEvent( safe_type == SAFE_Event_Type.LIQUIDITY_EVENT  || safe_type == SAFE_Event_Type.DISSOLUTION_EVENT ) from s.terminating_event
-   then
-       // modify the safe_operates to true for the safe_result.
-       sr.setSafe_operates_as_preferred_stock(true);
-       // update( sr ) and modify( sr ) do not work with a handle not found error
+// If any of the Company’s 
+// securityholders are given a choice as to the form and amount of Proceeds to be received in a Liquidity Event, the Investor 
+// will be given the same choice, provided that the Investor may not choose to receive a form of consideration that the Investor 
+// would be ineligible to receive as a result of the Investor’s failure to satisfy any requirement or limitation generally 
+// applicable to the Company’s securityholders, or under any applicable laws.
+
+rule "Liquidity Event Form and Amount"
+    agenda-group "post-terminate"
+    when
+        s : SAFE( terminated == true, sr : safe_result )
+        e : RWEvent( safe_type == SAFE_Event_Type.LIQUIDITY_EVENT, security_holders_given_choice_of_form_and_amount == true ) from s.terminating_event
+    then
+        System.out.println("Triggering Liquidity Event Form and Amount Rule.\n");
+        modify( sr ) {
+          setInvestor_choice_form_and_amount(true)
+        }
+end
+
+// Notwithstanding the foregoing, in connection with a Change of Control intended to qualify as a tax-free reorganization, 
+// the Company may reduce the cash portion of Proceeds payable to the Investor by the amount determined by its board of 
+// directors in good faith for such Change of Control to qualify as a tax-free reorganization for U.S. federal income tax 
+// purposes, provided that such reduction (A) does not reduce the total Proceeds payable to such Investor and (B) is applied 
+// in the same manner and on a pro rata basis to all securityholders who have equal priority to the Investor under Section 1(d).
+
+rule "Liquidity Event Change of Control"
+    agenda-group "post-terminate"
+    when
+        s : SAFE( terminated == true, sr : safe_result )
+        e : RWEvent( safe_type == SAFE_Event_Type.LIQUIDITY_EVENT, intended_to_qualify_tax_free == true ) from s.terminating_event
+    then
+        System.out.println("Triggering Liquidity Event Tax-Free Rule.\n");
+        modify( sr ) {
+          setBoard_may_reduce_cash_portion(true)
+        }
+end
+
+// “Liquidity Capitalization” is calculated as of immediately prior to the Liquidity Event, and (without double- counting, in each case calculated on an as-converted to Common Stock basis): 
+// •	Includes all shares of Capital Stock issued and outstanding;
+// •	Includes all (i) issued and outstanding Options and (ii) to the extent receiving Proceeds, Promised Options;
+// •	Includes all Converting Securities, other than any Safes and other convertible securities (including without limitation shares of Preferred Stock) where the holders of such securities are receiving Cash-Out Amounts or similar liquidation preference payments in lieu of Conversion Amounts or similar “as-converted” payments; and
+// •	Excludes the Unissued Option Pool.
+
+rule "Liquidity Capitalization"
+    agenda-group "capitalization"
+    when
+        c : Company( csi : capital_stock_issued, io: issued_options, po: promised_options, cs: converting_securities )
+    then
+        System.out.println("Triggering Liquidity Capitalization Calculation.\n");
+        modify (c) {
+            setLiquidity_capitalization((int)Math.floor(csi+io+po/(1-cs)))
+        }
+end
+
+// “Company Capitalization” is calculated as of immediately prior to the Equity Financing and (without double-counting, in each case calculated on an as-converted to Common Stock basis):
+// •	Includes all shares of Capital Stock issued and outstanding;
+// •	Includes all Converting Securities;
+// •	Includes all (i) issued and outstanding Options and (ii) Promised Options; and
+// •	Includes the Unissued Option Pool, except that any increase to the Unissued Option Pool in connection with the Equity Financing shall only be included to the extent that the number of Promised Options exceeds the Unissued Option Pool prior to such increase.
+
+// Note that we are not implementing the "increased option pool rule" in the last bullet point.
+
+rule "Company Capitalization"
+    agenda-group "capitalization"
+    when
+        c : Company( csi : capital_stock_issued, io: issued_options, po: promised_options, cs: converting_securities, uo: unissued_options, capitalization == 0 )
+    then
+        System.out.println("Triggering Company Capitalization Calculation.\n");
+        modify (c) {
+            setCapitalization((int)Math.floor(csi+io+po+uo/(1-cs)))
+        }
 end

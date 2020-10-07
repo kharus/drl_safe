@@ -3,3 +3,4 @@
 /.settings
 /target
 .vscode/launch.json
+.vscode/settings.json
