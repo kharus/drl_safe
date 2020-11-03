@@ -490,3 +490,13 @@ rule "Results"
         System.out.println(pn + " is entitled to " + spsd + " preferred stock.");
         System.out.println("These requirements will be met on: " + te + "\n\n");
 end
+
+query "SAFE Results"
+    $safeResult : SAFE_Result()
+    $safe : SAFE(safe_result == $safeResult)
+end
+
+query safeOfInvestor(String investorName)
+    $safe : SAFE(investor.name == investorName)
+    $issuedStock : Integer() from $safe.safe_result.safe_preferred_stock_due
+end
