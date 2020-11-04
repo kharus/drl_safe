@@ -39,8 +39,6 @@ public class App
         ksession.fireAllRules();
         agenda.getAgendaGroup( "pre-terminate" ).setFocus();
         ksession.fireAllRules();
-        agenda.getAgendaGroup( "terminate" ).setFocus();
-        ksession.fireAllRules();
         agenda.getAgendaGroup( "post-terminate" ).setFocus();
         ksession.fireAllRules();
         agenda.getAgendaGroup( "results" ).setFocus();

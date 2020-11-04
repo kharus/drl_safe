@@ -138,10 +138,10 @@ end
 // Dissolution Event.
 
 rule "Dissolution Event"
-    agenda-group "terminate"
     when
-        s : SAFE( terminated == false, company != null, c : company, cash_out_amount != 0, co : cash_out_amount )
-        e : RWEvent( safe_type == SAFE_Event_Type.DISSOLUTION_EVENT ) from c.events
+        e : RWEvent( safe_type == SAFE_Event_Type.DISSOLUTION_EVENT )
+        c : Company( events contains e)
+        s : SAFE( terminated == false, company == c, cash_out_amount != 0, co : cash_out_amount)
     then
         // System.out.println("Triggering Dissolution Event Rule.\n");
         SAFE_Result safe_result = new SAFE_Result();
@@ -182,11 +182,10 @@ end
 // indemnification obligations for the Investor.
 
 rule "Equity Financing"
-    agenda-group "terminate"
     when
-        s : SAFE( terminated == false, pa: purchase_amount, cp : conversion_price )
-        c : Company(  ) from s.company
-        e : RWEvent( safe_type == SAFE_Event_Type.EQUITY_FINANCING ) from c.events
+        e : RWEvent( safe_type == SAFE_Event_Type.EQUITY_FINANCING )
+        c : Company( events contains e)
+        s : SAFE( terminated == false, pa: purchase_amount, cp : conversion_price, company == c )
     then
         // System.out.println("Triggering Equity Financing Rule.\n");
         SAFE_Result safe_result = new SAFE_Result();
@@ -346,11 +345,10 @@ end
 // Common Stock equal to the Purchase Amount divided by the Liquidity Price (the “Conversion Amount”).
 
 rule "Liquidity Event s1(b)"
-    agenda-group "terminate"
     when
-        s : SAFE( terminated == false, coa : cash_out_amount, cash_out_amount != 0, ca : conversion_amount, conversion_amount != 0.0)
-        c : Company( ) from s.company
-        e : RWEvent( safe_type == SAFE_Event_Type.LIQUIDITY_EVENT ) from c.events
+        e : RWEvent( safe_type == SAFE_Event_Type.LIQUIDITY_EVENT )
+        c : Company( events contains e)
+        s : SAFE( terminated == false, company == c, coa : cash_out_amount, cash_out_amount != 0, ca : conversion_amount, conversion_amount != 0.0)
     then
         // System.out.println("Triggering Liquidity Event results rule.\n");
         SAFE_Result safe_result = new SAFE_Result();
